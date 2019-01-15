@@ -11,7 +11,7 @@ resource "aws_cloudwatch_log_subscription_filter" "elasticsearch_subscription_ap
   count           = "${length(var.log_groups)}"
   name            = "elasticsearch-subscription-group-${element(var.log_groups, count.index)}-errors"
   log_group_name  = "/aws/lambda/${element(var.log_groups, count.index)}"
-  filter_pattern  = "ERROR"
+  filter_pattern  = "DEBUG"
   destination_arn = "${aws_lambda_function.log_stream_lambda.arn}"
   depends_on      = ["aws_lambda_permission.cloudwatch_application"]
 }

@@ -5,21 +5,24 @@
 var https = require('https');
 var zlib = require('zlib');
 var crypto = require('crypto');
+var logit = require('./logit_client').client();
 
 var logLambda = {
 
     ENDPOINT: process.env.ELASTICSEARCH_URL,
-    API_KEY: process.env.ELASTICSEARCH_API_KEY,
     REGION: process.env.AWS_REGION,
 
     init: function() {
         self = this;
         self.callbackLevel = 0;
+        console.log("Initialised CloudWatch Logs lambda");
     },
 
     handler: function(input, context) {
     // decode input from base64
         var zippedInput = new Buffer(input.awslogs.data, 'base64');
+
+        self.context = context;
 
         // decompress the input
         zlib.gunzip(zippedInput, function(error, buffer) {
@@ -39,12 +42,15 @@ var logLambda = {
             }
 
             // post documents to the Amazon Elasticsearch Service
-            self.post(elasticsearchBulkData, self.responseCallback);
+            logit.post(elasticsearchBulkData, self.responseCallback);
 
         });
     },
 
     responseCallback: function(error, success, statusCode, failedItems) {
+
+        var context = self.context;
+
         console.log('Response: ' + JSON.stringify({
             "statusCode": statusCode
         }));
@@ -147,61 +153,6 @@ var logLambda = {
             JSON.parse(message);
         } catch (e) { return false; }
         return true;
-    },
-
-    post: function(body, callback) {
-        var requestParams = self.buildRequest(self.ENDPOINT, self.API_KEY, body);
-
-        var request = https.request(requestParams, function(response) {
-            var responseBody = '';
-            response.on('data', function(chunk) {
-                console.log("Logit response chunk", chunk);
-                responseBody += chunk;
-            });
-            response.on('end', function() {
-                var info = JSON.parse(responseBody);
-                var failedItems;
-                var success;
-
-                if (response.statusCode >= 200 && response.statusCode < 299) {
-                    failedItems = info.items.filter(function(x) {
-                        return x.index.status >= 300;
-                    });
-
-                    success = {
-                        "attemptedItems": info.items.length,
-                        "successfulItems": info.items.length - failedItems.length,
-                        "failedItems": failedItems.length
-                    };
-                }
-
-                var error = response.statusCode !== 200 || info.errors === true ? {
-                    "statusCode": response.statusCode,
-                    "responseBody": responseBody
-                } : null;
-
-                callback(error, success, response.statusCode, failedItems);
-            });
-        }).on('error', function(error) {
-            console.log("Logit response error", error);
-            callback(error);
-        });
-        request.end(requestParams.body);
-    },
-
-    buildRequest: function(endpoint, api_key, body) {
-        return {
-            host: endpoint,
-            method: 'POST',
-            path: '/_bulk',
-            body: body,
-            headers: {
-                'Host': endpoint,
-                'ApiKey': api_key,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-            }
-        };
     }
 
 };

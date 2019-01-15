@@ -2,11 +2,11 @@ var AWS = require('aws-sdk');
 var https = require('https');
 var zlib = require('zlib');
 var crypto = require('crypto');
+var logit = require('./logit_client').client();
 
 var metricLambda = {
 
     ENDPOINT: process.env.ELASTICSEARCH_URL,
-    API_KEY: process.env.ELASTICSEARCH_API_KEY,
     REGION: process.env.AWS_REGION,
 
     init: function() {
@@ -84,7 +84,11 @@ var metricLambda = {
         if (bulkData.body.length > 0) {
             console.log('Sending ' + (bulkData.body.length/2) + ' metrics to ElasticSearch:');
 
-            self.post(bulkData.body, function(err, data) {
+            var bodyText = self.transform(bulkData.body);
+
+            console.log("Post body", bodyText);
+
+            logit.post(bodyText, function(err, data) {
                 if (err) {
                     self.errorExit(err, self.context);
                     console.log("Post to Logit failed");
@@ -113,21 +117,6 @@ var metricLambda = {
         context.fail(res);
     },
 
-    buildRequest: function(endpoint, api_key, body) {
-        return {
-            host: endpoint,
-            method: 'POST',
-            path: '/_bulk',
-            body: body,
-            headers: {
-                'Host': endpoint,
-                'ApiKey': api_key,
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-            }
-        }
-    },
-
     transform: function(body) {
         var bodyText, logLines, logEntry;
         try {
@@ -143,63 +132,6 @@ var metricLambda = {
             bodyText = null;
         }
         return bodyText;
-    },
-
-    post: function(body, callback) {
-
-        var bodyText = self.transform(body);
-
-        console.log("Post body", bodyText);
-
-        var requestParams = self.buildRequest(self.ENDPOINT, self.API_KEY, bodyText);
-        console.log("Post request", requestParams);
-
-        try {
-            var request = https.request(requestParams, function(response) {
-                var responseBody = '';
-                response.on('data', function(chunk) {
-                    console.log("Logit response: data", chunk);
-                    responseBody += chunk;
-                });
-                response.on('end', function() {
-                    console.log("Logit response: end");
-                    var info = JSON.parse(responseBody);
-                    var failedItems;
-                    var success;
-
-                    if (response.statusCode >= 200 && response.statusCode < 299) {
-                        failedItems = info.items.filter(function(x) {
-                            return x.index.status >= 300;
-                        });
-
-                        success = {
-                            "attemptedItems": info.items.length,
-                            "successfulItems": info.items.length - failedItems.length,
-                            "failedItems": failedItems.length
-                        };
-
-                        console.log("Sent cloudwatch metrics", success);
-
-                    }
-
-                    var error = response.statusCode !== 200 || info.errors === true ? {
-                        "statusCode": response.statusCode,
-                        "responseBody": responseBody
-                    } : null;
-
-                    if (error) console.log("Failed to send cloudwatch metrics", error);
-
-                    callback(error, success, response.statusCode, failedItems);
-                });
-            }).on('error', function(error) {
-                callback(error);
-            });
-
-            request.end(requestParams.body);
-        } catch(error) {
-            callback(error);
-        }
-        console.log("Request ended");
     },
 
     getRegions: function() {
